@@ -437,8 +437,10 @@ def punch_out(body: PunchOutRequest):
     check_punch_out(rec["punch_in"], ts)
 
     derived = derive_fields(emp, date.fromisoformat(rec["date"]), rec["status"], rec["punch_in"], ts)
+    # Atomic guard: only one concurrent punch-out wins, and the write only applies if the
+    # status and punch_in we computed from are unchanged (a concurrent PATCH makes it miss -> 409).
     updated = db.attendance_logs.find_one_and_update(
-        {"_id": rec["_id"], "punch_out": None},  # atomic guard: only one concurrent punch-out wins
+        {"_id": rec["_id"], "punch_out": None, "status": rec["status"], "punch_in": rec["punch_in"]},
         {"$set": {"punch_out": ts,
                   "work_hours": derived["work_hours"],
                   "overtime_minutes": derived["overtime_minutes"],
@@ -446,7 +448,7 @@ def punch_out(body: PunchOutRequest):
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
-        raise HTTPException(409, "already punched out")
+        raise HTTPException(409, "already punched out, or the record was modified concurrently")
     return serialize_record(updated)
 
 
